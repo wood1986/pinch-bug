@@ -45,39 +45,25 @@ const ImageViewer = gestureHandlerRootHOC(
     const active = useSharedValue(false);
     const transform = useSharedValue(identity3);
     const lastTransform = useSharedValue(identity3);
-    const focal = useSharedValue([0, 0]);
     const [layout, setLayout] = useState<LayoutRectangle | null>(null);
+    const distance = useSharedValue(0);
 
     const onEnd = (_: any, success: boolean) => {
       'worklet';
+      active.value = false;
       lastTransform.value = transform.value
     };
 
-    const manual = Gesture.Manual()
-      .onTouchesDown((e, manager) => {
-        for (const touch of e.changedTouches) {
-          touches[touch.id].value = {
-            visible: true,
-            x: touch.x,
-            y: touch.y,
-          };
-        }
-
-        if (e.numberOfTouches >= 2) {
-          manager.activate();
+    const manual = Gesture
+      .Manual()
+      .onTouchesDown((event, manager) => {
+        if (event.numberOfTouches > 1) {
+          const [touch0, touch1] = event.allTouches;
+          distance.value = Math.sqrt(Math.pow(touch0.x - touch1.x, 2) + Math.pow(touch0.y - touch1.y, 2))
         }
       })
-      .onTouchesMove((e, _manager) => {
-        for (const touch of e.changedTouches) {
-          touches[touch.id].value = {
-            visible: true,
-            x: touch.x,
-            y: touch.y,
-          };
-        }
-      })
-      .onTouchesUp((e, manager) => {
-        for (const touch of e.changedTouches) {
+      .onTouchesUp((event, manager) => {
+        for (const touch of event.changedTouches) {
           touches[touch.id].value = {
             visible: false,
             x: touch.x,
@@ -85,90 +71,74 @@ const ImageViewer = gestureHandlerRootHOC(
           };
         }
 
-        if (e.numberOfTouches === 0) {
+        if (event.numberOfTouches === 0) {
           manager.end();
+        }
+      })
+      .onTouchesMove((event, manager) => {
+        for (const touch of event.changedTouches) {
+          touches[touch.id].value = {
+            visible: true,
+            x: touch.x,
+            y: touch.y,
+          };
+        }
+
+        if (!layout) {
+          return
+        }
+
+        if (event.numberOfTouches > 1) {
+          const [touch0, touch1] = event.allTouches;
+          const focal1 = [
+            (touch0.x + touch1.x) / 2,
+            (touch0.y + touch1.y) / 2
+          ]
+          const focal05 = [
+            (focal1[0] / layout.width - 0.5) * layout.width,
+            (focal1[1] / layout.height - 0.5) * layout.height,
+          ];
+
+          const scale = Math.sqrt(Math.pow(touch0.x - touch1.x, 2) + Math.pow(touch0.y - touch1.y, 2)) / distance.value
+
+          let matrix = lastTransform.value;
+          matrix = multiply3(matrix, [
+            1, 0, focal05[0],
+            0, 1, focal05[1],
+            0, 0, 1,
+          ]);
+          matrix = multiply3(matrix, [
+            scale, 0, 0,
+            0, scale, 0,
+            0, 0, 1
+          ]);
+          matrix = multiply3(matrix, [
+            1, 0, -focal05[0],
+            0, 1, -focal05[1],
+            0, 0, 1,
+          ]);
+          transform.value = matrix;
         }
       })
       .onStart(() => {
         active.value = true;
       })
-      .onEnd(() => {
-        active.value = false;
-      });
+      .onEnd(onEnd)
 
-    const pan = Gesture.Pan()
-      .maxPointers(1)
-      .onChange(e => {
-        transform.value = multiply3(lastTransform.value, [
-          1,
-          0,
-          e.translationX / lastTransform.value[0],
-          0,
-          1,
-          e.translationY / lastTransform.value[4],
-          0,
-          0,
-          1,
-        ]);
-      })
-      .onEnd(onEnd);
-
-    const pinch = Gesture.Pinch()
-      .onChange(e => {
-        if (!layout) {
-          return;
-        }
-
-        const focalX = e.focalX
-        const focalY = e.focalY
-
-        focal.value = [
-          (focalX / layout.width - 0.5) * layout.width,
-          (focalY / layout.height - 0.5) * layout.height,
-        ];
-
-        let matrix = lastTransform.value;
-        matrix = multiply3(matrix, [
-          1,
-          0,
-          focal.value[0],
-          0,
-          1,
-          focal.value[1],
-          0,
-          0,
-          1,
-        ]);
-        matrix = multiply3(matrix, [e.scale, 0, 0, 0, e.scale, 0, 0, 0, 1]);
-        matrix = multiply3(matrix, [
-          1,
-          0,
-          -focal.value[0],
-          0,
-          1,
-          -focal.value[1],
-          0,
-          0,
-          1,
-        ]);
-        transform.value = matrix;
-      })
-      .onEnd(onEnd);
-
-      const animatedStyle = useAnimatedStyle(() => {
-        return {
-          transform: [
-            {translateX: transform.value[2]},
-            {translateY: transform.value[5]},
-            {scaleX: transform.value[0]},
-            {scaleY: transform.value[4]},
-          ],
-        };
-      });
+    const animatedStyle = useAnimatedStyle(() => {
+      return {
+        transform: [
+          {translateX: transform.value[2]},
+          {translateY: transform.value[5]},
+          {scaleX: transform.value[0]},
+          {scaleY: transform.value[4]},
+        ],
+      };
+    });
 
     return (
       <>
-      <GestureDetector gesture={Gesture.Simultaneous(manual, pinch)}>
+      <GestureDetector gesture={manual}>
         <Animated.View
           collapsable={false}
           style={[styles.fullscreen, animatedStyle]}>
